@@ -1,4 +1,4 @@
-# Etapa 1: Construcción
+# Etapa 1: Construccion
 FROM maven:3.9-eclipse-temurin-17 AS builder
 WORKDIR /app
 
@@ -6,11 +6,11 @@ WORKDIR /app
 COPY pom.xml .
 RUN mvn dependency:go-offline -B
 
-# Copiar el código fuente y construir el JAR
+# Copiar el codigo fuente y construir el JAR
 COPY src ./src
 RUN mvn clean package -DskipTests
 
-# Etapa 2: Ejecución
+# Etapa 2: Ejecucion
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
 
@@ -20,5 +20,5 @@ COPY --from=builder /app/target/*.jar app.jar
 # Exponer el puerto
 EXPOSE 8080
 
-# Comando para ejecutar la aplicación
+# Comando para ejecutar la aplicacion
 ENTRYPOINT ["java", "-jar", "app.jar"]
