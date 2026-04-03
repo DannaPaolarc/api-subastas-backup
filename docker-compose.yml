@@ -1,0 +1,17 @@
+services:
+  db-subastas:
+    image: mysql:8.0
+    container_name: contenedor-subastas
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASS}      # Viene del .env
+      MYSQL_DATABASE: db_subastas
+    ports:
+      - "3306:3306"
+    volumes:
+      - datos_subastas:/var/lib/mysql
+    env_file:
+      - .env                              # Lee el archivo .env automáticamente
+
+volumes:
+  datos_subastas:
+  
