@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
@@ -28,53 +29,31 @@ public class SubastaService {
     @Autowired 
     private SimpMessagingTemplate ws;
 
+    // Zona horaria de Mexico (Ciudad de Mexico)
+    private static final ZoneId ZONA_MEXICO = ZoneId.of("America/Mexico_City");
+    
     // Formateador para hora en formato 24 horas
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("HH:mm");
 
     // METODOS PUBLICOS
     
-    /*
-     * Obtiene una subasta por su ID
-     * Parametro: id - Identificador de la subasta
-     * Retorna: Subasta encontrada
-     * Lanza: RuntimeException si no existe
-     */
     public Subasta obtenerPorId(Long id) {
         return subastaRepo.findById(id)
             .orElseThrow(() -> new RuntimeException("Subasta no encontrada"));
     }
 
-    /*
-     * Obtiene todas las subastas activas
-     * Retorna: Lista de subastas con estado ACTIVA
-     */
     public List<Subasta> getActivas() { 
         return subastaRepo.findByEstado("ACTIVA"); 
     }
     
-    /*
-     * Obtiene todas las subastas (activas y finalizadas)
-     * Retorna: Lista completa de subastas
-     */
     public List<Subasta> getTodas() { 
         return subastaRepo.findAll(); 
     }
 
-    /*
-     * Obtiene las 10 mejores ofertas de una subasta
-     * Parametro: subastaId - Identificador de la subasta
-     * Retorna: Lista de ofertas ordenadas por monto descendente
-     */
     public List<Oferta> getOfertas(Long subastaId) {
         return ofertaRepo.findTop10BySubastaIdOrderByMontoDesc(subastaId);
     }
 
-    /*
-     * Crea una nueva subasta en estado PENDIENTE
-     * Parametro: s - Objeto Subasta con datos basicos
-     * Validaciones: Precio inicial > 0, Producto no vacio
-     * Retorna: Subasta creada
-     */
     @Transactional
     public Subasta crear(Subasta s) {
         if (s.getPrecioInicial() == null || s.getPrecioInicial() <= 0) {
@@ -91,12 +70,6 @@ public class SubastaService {
         return subastaRepo.save(s);
     }
 
-    /*
-     * Inicia una subasta pendiente
-     * Parametros: id - ID de subasta, duracionMinutos - Duracion en minutos
-     * Validaciones: Subasta no activa, Duracion positiva
-     * Retorna: Subasta iniciada con estado ACTIVA y tiempo de fin calculado
-     */
     @Transactional
     public Subasta iniciar(Long id, int duracionMinutos) {
         System.out.println("=== DURACION RECIBIDA: " + duracionMinutos + " minutos ===");
@@ -111,8 +84,8 @@ public class SubastaService {
         }
 
         s.setEstado("ACTIVA");
-        s.setTiempoInicio(LocalDateTime.now());
-        s.setTiempoFin(LocalDateTime.now().plusMinutes(duracionMinutos));
+        s.setTiempoInicio(LocalDateTime.now(ZONA_MEXICO));
+        s.setTiempoFin(LocalDateTime.now(ZONA_MEXICO).plusMinutes(duracionMinutos));
 
         subastaRepo.save(s);
 
@@ -120,11 +93,6 @@ public class SubastaService {
         return s;
     }
 
-    /*
-     * Finaliza una subasta activa manualmente
-     * Parametro: id - ID de subasta
-     * Retorna: Subasta finalizada
-     */
     @Transactional
     public Subasta finalizar(Long id) {
         Subasta s = subastaRepo.findById(id)
@@ -137,18 +105,6 @@ public class SubastaService {
         return cerrarSubasta(s);
     }
 
-    /*
-     * Realiza una oferta en una subasta activa
-     * Parametros: subastaId - ID de subasta, usuarioId - ID del usuario, monto - Cantidad ofertada
-     * Validaciones:
-     *   - Monto > 0
-     *   - Subasta esta ACTIVA
-     *   - Subasta no expirada
-     *   - Monto >= precioActual + incrementoMinimo
-     * Logica adicional:
-     *   - Si quedan menos de 10 segundos, se extiende el tiempo +30 segundos
-     * Retorna: Subasta actualizada
-     */
     @Transactional
     public Subasta ofertar(Long subastaId, Long usuarioId, Double monto) {
         Subasta s = subastaRepo.findById(subastaId)
@@ -166,7 +122,10 @@ public class SubastaService {
         if (!"ACTIVA".equals(s.getEstado())) {
             throw new RuntimeException("La subasta no esta activa");
         }
-        if (s.getTiempoFin().isBefore(LocalDateTime.now())) {
+        
+        // Usar zona horaria de Mexico
+        LocalDateTime ahoraMexico = LocalDateTime.now(ZONA_MEXICO);
+        if (s.getTiempoFin().isBefore(ahoraMexico)) {
             throw new RuntimeException("La subasta ya expiro");
         }
         
@@ -187,8 +146,7 @@ public class SubastaService {
         s.setGanador(u.getNombre());
 
         // LOGICA DE EXTENSION DE TIEMPO (ULTIMOS 10 SEGUNDOS)
-        LocalDateTime ahora = LocalDateTime.now();
-        LocalDateTime limiteExtension = ahora.plusSeconds(10);
+        LocalDateTime limiteExtension = ahoraMexico.plusSeconds(10);
         
         if (s.getTiempoFin().isBefore(limiteExtension)) {
             LocalDateTime nuevoTiempoFin = s.getTiempoFin().plusSeconds(30);
@@ -199,7 +157,7 @@ public class SubastaService {
             extensionMsg.setUsuario("SISTEMA");
             extensionMsg.setContenido("Ultimos segundos. Se agregaron 30 segundos mas");
             extensionMsg.setTipo("SISTEMA");
-            extensionMsg.setHora(LocalTime.now().format(FMT));
+            extensionMsg.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
             extensionMsg.setSubastaId(subastaId);
             broadcast(subastaId, extensionMsg);
         }
@@ -211,7 +169,7 @@ public class SubastaService {
         pujaMsg.setUsuario(u.getNombre());
         pujaMsg.setContenido(" oferto $" + String.format("%,.0f", monto));
         pujaMsg.setTipo("PUJA");
-        pujaMsg.setHora(LocalTime.now().format(FMT));
+        pujaMsg.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
         pujaMsg.setSubastaId(subastaId);
         broadcast(subastaId, pujaMsg);
 
@@ -220,7 +178,7 @@ public class SubastaService {
         precioMsg.setUsuario("SISTEMA");
         precioMsg.setContenido("PRECIO_ACTUAL:" + monto);
         precioMsg.setTipo("PRECIO");
-        precioMsg.setHora(LocalTime.now().format(FMT));
+        precioMsg.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
         precioMsg.setSubastaId(subastaId);
         broadcast(subastaId, precioMsg);
 
@@ -229,26 +187,17 @@ public class SubastaService {
 
     // METODOS PRIVADOS
 
-    /*
-     * Scheduler que se ejecuta cada 3 segundos
-     * Busca subastas ACTIVAS cuyo tiempo de fin ya paso
-     * Las finaliza automaticamente
-     */
     @Scheduled(fixedDelay = 3000)
     public void revisarExpiradas() {
+        LocalDateTime ahoraMexico = LocalDateTime.now(ZONA_MEXICO);
         List<Subasta> expiradas = subastaRepo
-                .findByEstadoAndTiempoFinBefore("ACTIVA", LocalDateTime.now());
+                .findByEstadoAndTiempoFinBefore("ACTIVA", ahoraMexico);
 
         for (Subasta s : expiradas) {
             cerrarSubasta(s);
         }
     }
 
-    /*
-     * Cierra una subasta y determina el ganador
-     * Parametro: s - Subasta a finalizar
-     * Retorna: Subasta con estado FINALIZADA y ganador asignado
-     */
     private Subasta cerrarSubasta(Subasta s) {
         if ("FINALIZADA".equals(s.getEstado())) {
             return s;
@@ -274,7 +223,7 @@ public class SubastaService {
         finalMsg.setUsuario("SISTEMA");
         finalMsg.setContenido(msg);
         finalMsg.setTipo("FINALIZADA");
-        finalMsg.setHora(LocalTime.now().format(FMT));
+        finalMsg.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
         finalMsg.setSubastaId(s.getId());
         
         broadcast(s.getId(), finalMsg);
@@ -284,34 +233,24 @@ public class SubastaService {
         resultadoMsg.setUsuario("SISTEMA");
         resultadoMsg.setContenido("SUBASTA_FINALIZADA:" + s.getId() + ":" + msg);
         resultadoMsg.setTipo("FINALIZADA");
-        resultadoMsg.setHora(LocalTime.now().format(FMT));
+        resultadoMsg.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
         resultadoMsg.setSubastaId(s.getId());
         broadcast(s.getId(), resultadoMsg);
 
         return s;
     }
 
-    /*
-     * Envia un mensaje WebSocket a los canales correspondientes
-     * Parametros: subastaId - ID de subasta, msg - Mensaje a enviar
-     * Destinos: /topic/subasta/{id} (especifico) y /topic/publico (general)
-     */
     private void broadcast(Long subastaId, MensajeChat msg) {
         ws.convertAndSend("/topic/subasta/" + subastaId, msg);
         ws.convertAndSend("/topic/publico", msg);
     }
 
-    /*
-     * Crea un mensaje de sistema estandarizado
-     * Parametros: texto - Contenido del mensaje, subastaId - ID de subasta
-     * Retorna: MensajeChat configurado como tipo SISTEMA
-     */
     private MensajeChat sistemaMsg(String texto, Long subastaId) {
         MensajeChat m = new MensajeChat();
         m.setUsuario("SISTEMA");
         m.setContenido(texto);
         m.setTipo("SISTEMA");
-        m.setHora(LocalTime.now().format(FMT));
+        m.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
         m.setSubastaId(subastaId);
         return m;
     }
