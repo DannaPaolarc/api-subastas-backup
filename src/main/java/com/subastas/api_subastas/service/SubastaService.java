@@ -99,6 +99,7 @@ public class SubastaService {
      */
     @Transactional
     public Subasta iniciar(Long id, int duracionMinutos) {
+        System.out.println("=== DURACION RECIBIDA: " + duracionMinutos + " minutos ===");
         Subasta s = subastaRepo.findById(id)
             .orElseThrow(() -> new RuntimeException("Subasta no encontrada"));
 
