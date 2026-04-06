@@ -70,27 +70,28 @@ public class SubastaService {
         return subastaRepo.save(s);
     }
 
-    @Transactional
+   @Transactional
     public Subasta iniciar(Long id, int duracionMinutos) {
-        System.out.println("=== DURACION RECIBIDA: " + duracionMinutos + " minutos ===");
-        Subasta s = subastaRepo.findById(id)
-            .orElseThrow(() -> new RuntimeException("Subasta no encontrada"));
+    System.out.println("=== DURACION RECIBIDA: " + duracionMinutos + " minutos ===");
+    Subasta s = subastaRepo.findById(id)
+        .orElseThrow(() -> new RuntimeException("Subasta no encontrada"));
 
-        if ("ACTIVA".equals(s.getEstado())) {
-            throw new RuntimeException("La subasta ya esta activa");
-        }
-        if (duracionMinutos <= 0) {
-            throw new RuntimeException("Duracion invalida");
-        }
+    if ("ACTIVA".equals(s.getEstado())) {
+        throw new RuntimeException("La subasta ya esta activa");
+    }
+    if (duracionMinutos <= 0) {
+        throw new RuntimeException("Duracion invalida");
+    }
 
-        s.setEstado("ACTIVA");
-        s.setTiempoInicio(LocalDateTime.now(ZONA_MEXICO));
-        s.setTiempoFin(LocalDateTime.now(ZONA_MEXICO).plusMinutes(duracionMinutos));
+    s.setEstado("ACTIVA");
+    // Usar UTC siempre
+    s.setTiempoInicio(LocalDateTime.now(ZoneId.of("UTC")));
+    s.setTiempoFin(LocalDateTime.now(ZoneId.of("UTC")).plusMinutes(duracionMinutos));
 
-        subastaRepo.save(s);
+    subastaRepo.save(s);
 
-        broadcast(s.getId(), sistemaMsg("Subasta iniciada. Duracion: " + duracionMinutos + " minutos", s.getId()));
-        return s;
+    broadcast(s.getId(), sistemaMsg("Subasta iniciada. Duracion: " + duracionMinutos + " minutos", s.getId()));
+    return s;
     }
 
     @Transactional
