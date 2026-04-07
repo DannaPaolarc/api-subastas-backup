@@ -17,43 +17,25 @@ public class ChatController {
     // Formateador para la hora de los mensajes (formato 24 horas)
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("HH:mm");
 
-    /*
-     * Endpoint para enviar mensajes de chat
-     * Destino STOMP: /app/chat.enviar
-     * Parametro: msg - Objeto MensajeChat con usuario, contenido y subastaId
-     * Funcionamiento:
-     *   1. Valida que usuario y contenido no sean nulos
-     *   2. Asigna hora actual y tipo chat
-     *   3. Difunde el mensaje al topic especifico de la subasta
-     *   4. Difunde el mensaje al topic publico general
-     * El mensaje se recibe en los clientes suscritos a /topic/subasta/{id} y /topic/publico
-     */
     @MessageMapping("/chat.enviar")
     public void enviarMensaje(@Payload MensajeChat msg) {
-
+        System.out.println("=== 1. MENSAJE RECIBIDO: " + msg.getContenido());
+        
         if (msg.getUsuario() == null || msg.getContenido() == null)
             return;
 
         msg.setHora(LocalTime.now().format(FMT));
         msg.setTipo("CHAT");
 
-        // Enviar al canal especifico de la subasta
+        System.out.println("=== 2. REENVIANDO A /topic/subasta/" + msg.getSubastaId());
         ws.convertAndSend("/topic/subasta/" + msg.getSubastaId(), msg);
         
-        // Enviar al canal publico general
+        System.out.println("=== 3. REENVIANDO A /topic/publico");
         ws.convertAndSend("/topic/publico", msg);
+        
+        System.out.println("=== 4. MENSAJE PROCESADO CORRECTAMENTE ===");
     }
 
-    /*
-     * Endpoint para notificar cuando un usuario se une a una subasta
-     * Destino STOMP: /app/chat.conectar
-     * Parametro: msg - Objeto MensajeChat con usuario y subastaId
-     * Funcionamiento:
-     *   1. Asigna hora actual y tipo sistema
-     *   2. Genera mensaje de bienvenida 
-     *   3. Difunde al topic especifico de la subasta
-     *   4. Difunde al topic publico general
-     */
     @MessageMapping("/chat.conectar")
     public void conectar(@Payload MensajeChat msg) {
         msg.setHora(LocalTime.now().format(FMT));
