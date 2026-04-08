@@ -57,7 +57,6 @@ public class SubastaService {
         if (duracionMinutos <= 0) throw new RuntimeException("Duracion invalida");
 
         s.setEstado("ACTIVA");
-        // Forzamos UTC exacto para evitar el desfase de 300 min
         LocalDateTime ahora = LocalDateTime.now(ZONA_UTC);
         s.setTiempoInicio(ahora);
         s.setTiempoFin(ahora.plusMinutes(duracionMinutos));
@@ -90,7 +89,6 @@ public class SubastaService {
         s.setPrecioActual(monto);
         s.setGanador(u.getNombre());
 
-        // Extensión de tiempo (Últimos 15 segundos)
         if (s.getTiempoFin().isBefore(ahoraUTC.plusSeconds(15))) {
             s.setTiempoFin(s.getTiempoFin().plusSeconds(30));
             broadcast(subastaId, sistemaMsg("¡Puja de último momento! +30 seg.", subastaId));
@@ -98,16 +96,14 @@ public class SubastaService {
 
         subastaRepo.save(s);
 
-        //  Notificamos la PUJA
         MensajeChat pujaMsg = new MensajeChat();
         pujaMsg.setUsuario(u.getNombre());
         pujaMsg.setContenido("PUJA de $" + String.format("%,.0f", monto));
-        pujaMsg.setTipo("PUJA");
+        pujaMsg.setTipo("PUJA"); // Esto activa el sonido 'pujar.mp3' en tu frontend
         pujaMsg.setHora(LocalTime.now(ZONA_UTC).format(FMT));
         pujaMsg.setSubastaId(subastaId);
         broadcast(subastaId, pujaMsg);
 
-        //  Notificamos cambio de PRECIO
         MensajeChat precioMsg = new MensajeChat();
         precioMsg.setUsuario("SISTEMA");
         precioMsg.setContenido("PRECIO_ACTUAL:" + monto);
@@ -132,6 +128,7 @@ public class SubastaService {
         return cerrarSubasta(s);
     }
 
+    // ========== AQUÍ ESTÁ EL CAMBIO PRINCIPAL ==========
     private Subasta cerrarSubasta(Subasta s) {
         if ("FINALIZADA".equals(s.getEstado())) return s;
         s.setEstado("FINALIZADA");
@@ -139,8 +136,13 @@ public class SubastaService {
         if (!ofertas.isEmpty()) s.setGanador(ofertas.get(0).getUsuario().getNombre());
         subastaRepo.save(s);
 
-        String texto = s.getGanador() != null ? "FINALIZADA. Ganador: " + s.getGanador() : "Finalizada sin ofertas.";
-        broadcast(s.getId(), sistemaMsg(texto, s.getId()));
+        String texto = s.getGanador() != null ? "¡SUBASTA FINALIZADA! Ganador: " + s.getGanador() : "Finalizada sin ofertas.";
+        
+        // Creamos el mensaje y le cambiamos el tipo a "FIN" para el sonido
+        MensajeChat finalMsg = sistemaMsg(texto, s.getId());
+        finalMsg.setTipo("FIN"); 
+        broadcast(s.getId(), finalMsg);
+        
         return s;
     }
 
