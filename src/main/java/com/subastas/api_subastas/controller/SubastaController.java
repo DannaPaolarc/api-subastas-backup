@@ -30,12 +30,9 @@ public class SubastaController {
     @Autowired 
     private JwtService jwtService;
     
-    //  Agregar esto para enviar mensajes WebSocket
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
 
-    //ENDPOINTS PUBLICOS
-    
     @GetMapping("/activas")
     public List<Subasta> activas() { 
         return service.getActivas(); 
@@ -60,8 +57,8 @@ public class SubastaController {
         return service.getOfertas(id); 
     }
     
-    //ENDPOINTS DE ADMINISTRADOR
-    
+    // --- ADMIN ---
+
     @PostMapping("/crear")
     public ResponseEntity<?> crear(@RequestBody Subasta s) {
         try {
@@ -93,7 +90,7 @@ public class SubastaController {
         }
     }
     
-    //ENDPOINTS DE USUARIO 
+    // --- USUARIO (OFERTAR) ---
     
     @PostMapping("/{id}/ofertar")
     public ResponseEntity<?> ofertar(
@@ -101,42 +98,37 @@ public class SubastaController {
             @RequestBody Map<String, Object> body,
             @RequestHeader(value = "Authorization", required = false) String authHeader) {
 
-        // Validar presencia del token
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             return ResponseEntity.status(401).body(Map.of("error", "Token requerido"));
         }
 
         String token = authHeader.substring(7);
         String correo;
-        
-        // Validar token
         try {
             correo = jwtService.getCorreo(token);
         } catch (Exception e) {
-            return ResponseEntity.status(401).body(Map.of("error", "Token invalido"));
+            return ResponseEntity.status(401).body(Map.of("error", "Token inválido"));
         }
 
-        // Buscar usuario
         Optional<Usuario> usuarioOpt = usuarioRepo.findByCorreoIgnoreCase(correo);
         if (usuarioOpt.isEmpty()) {
             return ResponseEntity.status(404).body(Map.of("error", "Usuario no encontrado"));
         }
 
-        // Validar monto
         Double monto;
         try {
             monto = Double.valueOf(body.get("monto").toString());
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Monto invalido"));
+            return ResponseEntity.badRequest().body(Map.of("error", "Monto inválido"));
         }
 
-        // Realizar oferta
         try {
-            Subasta resultado = service.ofertar(id, usuarioOpt.get().getId(), monto);
+            Usuario realUser = usuarioOpt.get();
+            Subasta resultado = service.ofertar(id, realUser.getId(), monto);
             
-            //  Enviar mensaje de puja por WebSocket con el nombre REAL del usuario
+            // Notificar por WebSocket
             MensajeChat aviso = new MensajeChat();
-            aviso.setUsuario(usuarioOpt.get().getNombre());
+            aviso.setUsuario(realUser.getNombre());
             aviso.setContenido("PUJA de $" + String.format("%,.0f", monto));
             aviso.setTipo("PUJA");
             aviso.setSubastaId(id);
@@ -149,8 +141,6 @@ public class SubastaController {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
-    
-    //METODOS PRIVADOS
     
     private void validarAdmin() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
