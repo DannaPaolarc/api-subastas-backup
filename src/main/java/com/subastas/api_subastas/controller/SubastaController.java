@@ -124,9 +124,10 @@ public class SubastaController {
 
         try {
             Usuario realUser = usuarioOpt.get();
+            // El Service se encarga de la lógica de negocio y validación de tiempo
             Subasta resultado = service.ofertar(id, realUser.getId(), monto);
             
-            // Notificar por WebSocket
+            // Notificar por WebSocket (Solo aquí para evitar duplicados)
             MensajeChat aviso = new MensajeChat();
             aviso.setUsuario(realUser.getNombre());
             aviso.setContenido("PUJA de $" + String.format("%,.0f", monto));
