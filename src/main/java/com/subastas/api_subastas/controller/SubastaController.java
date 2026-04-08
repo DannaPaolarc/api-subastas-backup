@@ -8,8 +8,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -26,38 +29,23 @@ public class SubastaController {
     
     @Autowired 
     private JwtService jwtService;
+    
+    //  Agregar esto para enviar mensajes WebSocket
+    @Autowired
+    private SimpMessagingTemplate messagingTemplate;
 
     //ENDPOINTS PUBLICOS
     
-    /*
-     * Obtiene todas las subastas activas
-     * URL: GET /api/subastas/activas
-     * Acceso: Publico (no requiere autenticacion)
-     * Retorna: Lista de subastas con estado ACTIVA
-     */
     @GetMapping("/activas")
     public List<Subasta> activas() { 
         return service.getActivas(); 
     }
 
-    /*
-     * Obtiene todas las subastas (activas y finalizadas)
-     * URL: GET /api/subastas/todas
-     * Acceso: Publico (no requiere autenticacion)
-     * Retorna: Lista completa de subastas
-     */
     @GetMapping("/todas")
     public List<Subasta> todas() { 
         return service.getTodas(); 
     }
     
-    /*
-     * Obtiene una subasta por su ID
-     * URL: GET /api/subastas/{id}
-     * Parametro: id - Identificador de la subasta
-     * Acceso: Publico
-     * Retorna: Subasta encontrada o HTTP 404
-     */
     @GetMapping("/{id}")
     public ResponseEntity<?> obtenerPorId(@PathVariable Long id) { 
         try {
@@ -67,13 +55,6 @@ public class SubastaController {
         }
     }
 
-    /*
-     * Obtiene el historial de ofertas de una subasta
-     * URL: GET /api/subastas/{id}/ofertas
-     * Parametro: id - Identificador de la subasta
-     * Acceso: Publico
-     * Retorna: Lista de ofertas ordenadas por monto descendente
-     */
     @GetMapping("/{id}/ofertas")
     public List<Oferta> ofertas(@PathVariable Long id) { 
         return service.getOfertas(id); 
@@ -81,13 +62,6 @@ public class SubastaController {
     
     //ENDPOINTS DE ADMINISTRADOR
     
-    /*
-     * Crea una nueva subasta
-     * URL: POST /api/subastas/crear
-     * Body: Objeto Subasta (producto, descripcion, precioInicial, incrementoMinimo)
-     * Acceso: Solo ADMIN
-     * Retorna: Subasta creada o HTTP 400 con error
-     */
     @PostMapping("/crear")
     public ResponseEntity<?> crear(@RequestBody Subasta s) {
         try {
@@ -98,13 +72,6 @@ public class SubastaController {
         }
     }
 
-    /*
-     * Inicia una subasta existente
-     * URL: POST /api/subastas/{id}/iniciar?minutos={duracion}
-     * Parametros: id - ID de subasta, minutos - Duracion en minutos (default 5)
-     * Acceso: Solo ADMIN
-     * Retorna: Subasta iniciada o HTTP 400 con error
-     */
     @PostMapping("/{id}/iniciar")
     public ResponseEntity<?> iniciar(@PathVariable Long id,
                                      @RequestParam(defaultValue = "5") int minutos) {
@@ -116,13 +83,6 @@ public class SubastaController {
         }
     }
 
-    /*
-     * Finaliza una subasta activa
-     * URL: POST /api/subastas/{id}/finalizar
-     * Parametro: id - ID de subasta
-     * Acceso: Solo ADMIN
-     * Retorna: Subasta finalizada o HTTP 400 con error
-     */
     @PostMapping("/{id}/finalizar")
     public ResponseEntity<?> finalizar(@PathVariable Long id) {
         try {
@@ -135,21 +95,6 @@ public class SubastaController {
     
     //ENDPOINTS DE USUARIO 
     
-    /*
-     * Realiza una oferta en una subasta activa
-     * URL: POST /api/subastas/{id}/ofertar
-     * Header: Authorization: Bearer {token}
-     * Body: {"monto": cantidad}
-     * Parametro: id - ID de subasta
-     * Acceso: Usuarios autenticados
-     * Retorna: Subasta actualizada o HTTP 401/400 con error
-     * Validaciones:
-     *   - Token valido y no expirado
-     *   - Usuario existe
-     *   - Monto valido y mayor al minimo requerido
-     *   - Subasta esta activa
-     *   - Tiempo no expirado
-     */
     @PostMapping("/{id}/ofertar")
     public ResponseEntity<?> ofertar(
             @PathVariable Long id,
@@ -188,6 +133,17 @@ public class SubastaController {
         // Realizar oferta
         try {
             Subasta resultado = service.ofertar(id, usuarioOpt.get().getId(), monto);
+            
+            //  Enviar mensaje de puja por WebSocket con el nombre REAL del usuario
+            MensajeChat aviso = new MensajeChat();
+            aviso.setUsuario(usuarioOpt.get().getNombre());
+            aviso.setContenido("PUJA de $" + String.format("%,.0f", monto));
+            aviso.setTipo("PUJA");
+            aviso.setSubastaId(id);
+            aviso.setHora(LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm")));
+            
+            messagingTemplate.convertAndSend("/topic/subasta/" + id, aviso);
+            
             return ResponseEntity.ok(resultado);
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
@@ -196,10 +152,6 @@ public class SubastaController {
     
     //METODOS PRIVADOS
     
-    /*
-     * Valida que el usuario autenticado tenga rol ADMIN
-     * Lanza excepcion si no tiene permisos
-     */
     private void validarAdmin() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.getAuthorities().stream()

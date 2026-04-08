@@ -29,8 +29,8 @@ public class SubastaService {
     @Autowired 
     private SimpMessagingTemplate ws;
 
-    // Zona horaria de Mexico (Ciudad de Mexico)
-    private static final ZoneId ZONA_MEXICO = ZoneId.of("America/Mexico_City");
+    // ✅ Usar UTC en todo el servicio
+    private static final ZoneId ZONA_UTC = ZoneId.of("UTC");
     
     // Formateador para hora en formato 24 horas
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("HH:mm");
@@ -70,28 +70,28 @@ public class SubastaService {
         return subastaRepo.save(s);
     }
 
-   @Transactional
+    @Transactional
     public Subasta iniciar(Long id, int duracionMinutos) {
-    System.out.println("=== DURACION RECIBIDA: " + duracionMinutos + " minutos ===");
-    Subasta s = subastaRepo.findById(id)
-        .orElseThrow(() -> new RuntimeException("Subasta no encontrada"));
+        System.out.println("=== DURACION RECIBIDA: " + duracionMinutos + " minutos ===");
+        Subasta s = subastaRepo.findById(id)
+            .orElseThrow(() -> new RuntimeException("Subasta no encontrada"));
 
-    if ("ACTIVA".equals(s.getEstado())) {
-        throw new RuntimeException("La subasta ya esta activa");
-    }
-    if (duracionMinutos <= 0) {
-        throw new RuntimeException("Duracion invalida");
-    }
+        if ("ACTIVA".equals(s.getEstado())) {
+            throw new RuntimeException("La subasta ya esta activa");
+        }
+        if (duracionMinutos <= 0) {
+            throw new RuntimeException("Duracion invalida");
+        }
 
-    s.setEstado("ACTIVA");
-    // Usar UTC siempre
-    s.setTiempoInicio(LocalDateTime.now(ZoneId.of("UTC")));
-    s.setTiempoFin(LocalDateTime.now(ZoneId.of("UTC")).plusMinutes(duracionMinutos));
+        s.setEstado("ACTIVA");
+        // ✅ Usar UTC
+        s.setTiempoInicio(LocalDateTime.now(ZONA_UTC));
+        s.setTiempoFin(LocalDateTime.now(ZONA_UTC).plusMinutes(duracionMinutos));
 
-    subastaRepo.save(s);
+        subastaRepo.save(s);
 
-    broadcast(s.getId(), sistemaMsg("Subasta iniciada. Duracion: " + duracionMinutos + " minutos", s.getId()));
-    return s;
+        broadcast(s.getId(), sistemaMsg("Subasta iniciada. Duracion: " + duracionMinutos + " minutos", s.getId()));
+        return s;
     }
 
     @Transactional
@@ -124,9 +124,9 @@ public class SubastaService {
             throw new RuntimeException("La subasta no esta activa");
         }
         
-        // Usar zona horaria de Mexico
-        LocalDateTime ahoraMexico = LocalDateTime.now(ZONA_MEXICO);
-        if (s.getTiempoFin().isBefore(ahoraMexico)) {
+        // ✅ Usar UTC
+        LocalDateTime ahoraUTC = LocalDateTime.now(ZONA_UTC);
+        if (s.getTiempoFin().isBefore(ahoraUTC)) {
             throw new RuntimeException("La subasta ya expiro");
         }
         
@@ -147,7 +147,7 @@ public class SubastaService {
         s.setGanador(u.getNombre());
 
         // LOGICA DE EXTENSION DE TIEMPO (ULTIMOS 10 SEGUNDOS)
-        LocalDateTime limiteExtension = ahoraMexico.plusSeconds(10);
+        LocalDateTime limiteExtension = ahoraUTC.plusSeconds(10);
         
         if (s.getTiempoFin().isBefore(limiteExtension)) {
             LocalDateTime nuevoTiempoFin = s.getTiempoFin().plusSeconds(30);
@@ -158,19 +158,19 @@ public class SubastaService {
             extensionMsg.setUsuario("SISTEMA");
             extensionMsg.setContenido("Ultimos segundos. Se agregaron 30 segundos mas");
             extensionMsg.setTipo("SISTEMA");
-            extensionMsg.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
+            extensionMsg.setHora(LocalTime.now(ZONA_UTC).format(FMT));
             extensionMsg.setSubastaId(subastaId);
             broadcast(subastaId, extensionMsg);
         }
 
         subastaRepo.save(s);
 
-        // BROADCAST DE LA PUJA
+        // ✅ BROADCAST DE LA PUJA (el nombre ya viene de u.getNombre())
         MensajeChat pujaMsg = new MensajeChat();
         pujaMsg.setUsuario(u.getNombre());
-        pujaMsg.setContenido(" oferto $" + String.format("%,.0f", monto));
+        pujaMsg.setContenido("PUJA de $" + String.format("%,.0f", monto));
         pujaMsg.setTipo("PUJA");
-        pujaMsg.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
+        pujaMsg.setHora(LocalTime.now(ZONA_UTC).format(FMT));
         pujaMsg.setSubastaId(subastaId);
         broadcast(subastaId, pujaMsg);
 
@@ -179,7 +179,7 @@ public class SubastaService {
         precioMsg.setUsuario("SISTEMA");
         precioMsg.setContenido("PRECIO_ACTUAL:" + monto);
         precioMsg.setTipo("PRECIO");
-        precioMsg.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
+        precioMsg.setHora(LocalTime.now(ZONA_UTC).format(FMT));
         precioMsg.setSubastaId(subastaId);
         broadcast(subastaId, precioMsg);
 
@@ -190,9 +190,9 @@ public class SubastaService {
 
     @Scheduled(fixedDelay = 3000)
     public void revisarExpiradas() {
-        LocalDateTime ahoraMexico = LocalDateTime.now(ZONA_MEXICO);
+        LocalDateTime ahoraUTC = LocalDateTime.now(ZONA_UTC);
         List<Subasta> expiradas = subastaRepo
-                .findByEstadoAndTiempoFinBefore("ACTIVA", ahoraMexico);
+                .findByEstadoAndTiempoFinBefore("ACTIVA", ahoraUTC);
 
         for (Subasta s : expiradas) {
             cerrarSubasta(s);
@@ -224,7 +224,7 @@ public class SubastaService {
         finalMsg.setUsuario("SISTEMA");
         finalMsg.setContenido(msg);
         finalMsg.setTipo("FINALIZADA");
-        finalMsg.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
+        finalMsg.setHora(LocalTime.now(ZONA_UTC).format(FMT));
         finalMsg.setSubastaId(s.getId());
         
         broadcast(s.getId(), finalMsg);
@@ -234,7 +234,7 @@ public class SubastaService {
         resultadoMsg.setUsuario("SISTEMA");
         resultadoMsg.setContenido("SUBASTA_FINALIZADA:" + s.getId() + ":" + msg);
         resultadoMsg.setTipo("FINALIZADA");
-        resultadoMsg.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
+        resultadoMsg.setHora(LocalTime.now(ZONA_UTC).format(FMT));
         resultadoMsg.setSubastaId(s.getId());
         broadcast(s.getId(), resultadoMsg);
 
@@ -251,7 +251,7 @@ public class SubastaService {
         m.setUsuario("SISTEMA");
         m.setContenido(texto);
         m.setTipo("SISTEMA");
-        m.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
+        m.setHora(LocalTime.now(ZONA_UTC).format(FMT));
         m.setSubastaId(subastaId);
         return m;
     }
