@@ -14,6 +14,8 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
+//contiene toda la logica de mi app para gestionar las subastas maneja creacion, inicio el tiempo lo majenaa ahi 
+// Tecnologias que utilizo Spring Service, Transaccional, Scheduled, WebSocket
 @Service
 public class SubastaService {
 
@@ -22,8 +24,9 @@ public class SubastaService {
     @Autowired private UsuarioRepository usuarioRepo;
     @Autowired private SimpMessagingTemplate ws;
 
-    private static final ZoneId ZONA_UTC = ZoneId.of("UTC");
-    private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("HH:mm");
+    // Configuración para México (Tamaulipas)
+    private static final ZoneId ZONA_MEXICO = ZoneId.of("America/Mexico_City");
+    private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("HH:mm"); //utilizo esto para mensajes 
 
     public Subasta obtenerPorId(Long id) {
         return subastaRepo.findById(id)
@@ -31,13 +34,13 @@ public class SubastaService {
     }
 
     public List<Subasta> getActivas() { return subastaRepo.findByEstado("ACTIVA"); }
-    
+    //contiene todas las subastas
     public List<Subasta> getTodas() { return subastaRepo.findAll(); }
-
+     ///conntiene las ofertas ,as altas 
     public List<Oferta> getOfertas(Long subastaId) {
         return ofertaRepo.findTop10BySubastaIdOrderByMontoDesc(subastaId);
     }
-
+    //validaciones de precios producto incremneto es minimo de 100 
     @Transactional
     public Subasta crear(Subasta s) {
         if (s.getPrecioInicial() == null || s.getPrecioInicial() <= 0) throw new RuntimeException("Precio inicial invalido");
@@ -48,7 +51,7 @@ public class SubastaService {
         s.setIncrementoMinimo(s.getIncrementoMinimo() != null ? s.getIncrementoMinimo() : 100.0);
         return subastaRepo.save(s);
     }
-
+    //valida las subastas que esten activas o no registra la horade inicio calcula la hora finalizada
     @Transactional
     public Subasta iniciar(Long id, int duracionMinutos) {
         Subasta s = subastaRepo.findById(id).orElseThrow(() -> new RuntimeException("No encontrada"));
@@ -57,15 +60,15 @@ public class SubastaService {
         if (duracionMinutos <= 0) throw new RuntimeException("Duracion invalida");
 
         s.setEstado("ACTIVA");
-        LocalDateTime ahora = LocalDateTime.now(ZONA_UTC);
+        LocalDateTime ahora = LocalDateTime.now(ZONA_MEXICO);
         s.setTiempoInicio(ahora);
         s.setTiempoFin(ahora.plusMinutes(duracionMinutos));
-
+        //noti a los usuarios coenctados 
         subastaRepo.save(s);
-        broadcast(s.getId(), sistemaMsg("Subasta iniciada. Finaliza: " + s.getTiempoFin().format(FMT) + " UTC", s.getId()));
+        broadcast(s.getId(), sistemaMsg("Subasta iniciada. Finaliza: " + s.getTiempoFin().format(FMT), s.getId()));
         return s;
     }
-
+    // procesa una puja realizada por un usuario en una subasta activa
     @Transactional
     public Subasta ofertar(Long subastaId, Long usuarioId, Double monto) {
         Subasta s = subastaRepo.findById(subastaId).orElseThrow(() -> new RuntimeException("No encontrada"));
@@ -74,8 +77,8 @@ public class SubastaService {
         if (monto == null || monto <= 0) throw new RuntimeException("Monto invalido");
         if (!"ACTIVA".equals(s.getEstado())) throw new RuntimeException("La subasta no esta activa");
         
-        LocalDateTime ahoraUTC = LocalDateTime.now(ZONA_UTC);
-        if (s.getTiempoFin().isBefore(ahoraUTC)) throw new RuntimeException("La subasta ya expiro");
+        LocalDateTime ahora = LocalDateTime.now(ZONA_MEXICO);
+        if (s.getTiempoFin().isBefore(ahora)) throw new RuntimeException("La subasta ya expiro");
         
         double minimo = s.getPrecioActual() + s.getIncrementoMinimo();
         if (monto < minimo) throw new RuntimeException("El monto minimo es $" + String.format("%,.0f", minimo));
@@ -89,26 +92,29 @@ public class SubastaService {
         s.setPrecioActual(monto);
         s.setGanador(u.getNombre());
 
-        if (s.getTiempoFin().isBefore(ahoraUTC.plusSeconds(15))) {
+        // Si faltan menos de 15 segundos, extendemos 30 segundos más
+        if (s.getTiempoFin().isBefore(ahora.plusSeconds(15))) {
             s.setTiempoFin(s.getTiempoFin().plusSeconds(30));
             broadcast(subastaId, sistemaMsg("¡Puja de último momento! +30 seg.", subastaId));
         }
 
         subastaRepo.save(s);
 
+        // Mensaje de Puja con hora de México antes tomaba la global toma una mas serca de tamaulipas 
         MensajeChat pujaMsg = new MensajeChat();
         pujaMsg.setUsuario(u.getNombre());
         pujaMsg.setContenido("PUJA de $" + String.format("%,.0f", monto));
-        pujaMsg.setTipo("PUJA"); // Esto activa el sonido 'pujar.mp3' en tu frontend
-        pujaMsg.setHora(LocalTime.now(ZONA_UTC).format(FMT));
+        pujaMsg.setTipo("PUJA"); 
+        pujaMsg.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
         pujaMsg.setSubastaId(subastaId);
         broadcast(subastaId, pujaMsg);
 
+        // Mensaje de actualización de precio
         MensajeChat precioMsg = new MensajeChat();
         precioMsg.setUsuario("SISTEMA");
         precioMsg.setContenido("PRECIO_ACTUAL:" + monto);
         precioMsg.setTipo("PRECIO");
-        precioMsg.setHora(LocalTime.now(ZONA_UTC).format(FMT));
+        precioMsg.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
         precioMsg.setSubastaId(subastaId);
         broadcast(subastaId, precioMsg);
 
@@ -117,45 +123,43 @@ public class SubastaService {
 
     @Scheduled(fixedDelay = 3000)
     public void revisarExpiradas() {
-        LocalDateTime ahoraUTC = LocalDateTime.now(ZONA_UTC);
-        List<Subasta> expiradas = subastaRepo.findByEstadoAndTiempoFinBefore("ACTIVA", ahoraUTC);
+        LocalDateTime ahora = LocalDateTime.now(ZONA_MEXICO);
+        List<Subasta> expiradas = subastaRepo.findByEstadoAndTiempoFinBefore("ACTIVA", ahora);
         for (Subasta s : expiradas) { cerrarSubasta(s); }
     }
-
+    //finaliza la subasta activa 
     @Transactional
     public Subasta finalizar(Long id) {
         Subasta s = subastaRepo.findById(id).orElseThrow(() -> new RuntimeException("No encontrada"));
         return cerrarSubasta(s);
     }
-
-    // ========== AQUÍ ESTÁ EL CAMBIO PRINCIPAL ==========
+//cuando finaliza obtiene las ofertas y da el ganadro notifica el resulado
     private Subasta cerrarSubasta(Subasta s) {
         if ("FINALIZADA".equals(s.getEstado())) return s;
         s.setEstado("FINALIZADA");
         List<Oferta> ofertas = ofertaRepo.findBySubastaIdOrderByMontoDesc(s.getId());
         if (!ofertas.isEmpty()) s.setGanador(ofertas.get(0).getUsuario().getNombre());
         subastaRepo.save(s);
-
+//resultado de la subast 
         String texto = s.getGanador() != null ? "¡SUBASTA FINALIZADA! Ganador: " + s.getGanador() : "Finalizada sin ofertas.";
         
-        // Creamos el mensaje y le cambiamos el tipo a "FIN" para el sonido
         MensajeChat finalMsg = sistemaMsg(texto, s.getId());
         finalMsg.setTipo("FIN"); 
         broadcast(s.getId(), finalMsg);
         
         return s;
     }
-
+//es a don de se envua de la base de datos 
     private void broadcast(Long subastaId, MensajeChat msg) {
         ws.convertAndSend("/topic/subasta/" + subastaId, msg);
     }
-
+//mnesaaje configurado tipo sistema y la hora actual al finlaizar la subast 
     private MensajeChat sistemaMsg(String texto, Long subastaId) {
         MensajeChat m = new MensajeChat();
         m.setUsuario("SISTEMA");
         m.setContenido(texto);
         m.setTipo("SISTEMA");
-        m.setHora(LocalTime.now(ZONA_UTC).format(FMT));
+        m.setHora(LocalTime.now(ZONA_MEXICO).format(FMT));
         m.setSubastaId(subastaId);
         return m;
     }
